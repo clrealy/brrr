@@ -66,3 +66,7 @@ Run against CUPS's `ippeveprinter` reference printer, with its output decoded by
 - No printer logins.
 - Discovery is IPv4 only.
 - N-up (several pages per sheet) from app dialogs isn't offered.
+
+## License
+
+MIT
