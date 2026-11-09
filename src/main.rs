@@ -18,6 +18,7 @@ use std::time::Duration;
 const HELP: &str = "brrr - printing without the suffering
 
   brrr FILE...             print it. pdf, docx, png, jpg, txt, ps, or - for stdin
+  brrr print FILE...       same thing, if you like typing
   brrr list                what printers are around
   brrr status [PRINTER]    state, ink, what's wrong
   brrr jobs                what's in the queue
@@ -628,7 +629,7 @@ fn parse_args(args: Vec<String>, legacy: bool) -> (Opts, Vec<String>) {
         let copies = |s: &str| s.parse::<u32>().ok().filter(|n| *n >= 1).unwrap_or_else(|| die(format!("'{s}' isn't a copy count")));
         match a.as_str() {
             "-h" | "--help" => { println!("{HELP}"); std::process::exit(0); }
-            "-V" | "--version" => { println!("brrr 0.2.1"); std::process::exit(0); }
+            "-V" | "--version" => { println!("brrr 0.2.2"); std::process::exit(0); }
             "-t" | "--to" => o.to = Some(need(&mut it, &a)),
             "-d" | "-P" if legacy => o.to = Some(need(&mut it, &a)),
             "-n" | "--copies" => { let v = need(&mut it, &a); o.copies = copies(&v); }
@@ -672,8 +673,15 @@ fn main() {
     }
 
     let (o, files) = parse_args(args, legacy);
+    let mut files = files;
+    // `brrr print` alone is still a file called "print" if one's sitting right there.
+    let print_word = !legacy && files.first().is_some_and(|f| f == "print") && (files.len() > 1 || !Path::new("print").exists());
+    if print_word {
+        files.remove(0);
+        if files.is_empty() { die("print what?"); }
+    }
     let to = o.to.clone();
-    let cmd = files.first().filter(|f| !legacy && !Path::new(f.as_str()).exists()).map(|s| s.as_str());
+    let cmd = files.first().filter(|f| !legacy && !print_word && !Path::new(f.as_str()).exists()).map(|s| s.as_str());
     let result = match cmd {
         Some("list" | "ls") => cmd_list(),
         Some("status") => cmd_status(files.get(1).map(|s| s.as_str()).or(to.as_deref())),

@@ -6,6 +6,7 @@ Printing on Linux without CUPS, drivers, or a daemon. It finds the printer and p
 
 ```
 brrr report.pdf
+brrr print report.pdf   # same thing
 brrr photo.jpg --size 4x6
 brrr notes.txt -2 -n 3 -p 1-4
 brrr essay.docx
