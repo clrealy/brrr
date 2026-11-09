@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="160" alt="brrr logo"></p>
+
 # brrr
 
 Printing on Linux without CUPS, drivers, or a daemon. It finds the printer and prints.
