@@ -45,7 +45,7 @@ If `--pages` or copies aren't supported by the printer, brrr handles them on its
 
 brrr uses `ipps` whenever a printer offers it. Printers use self-signed certificates, so brrr remembers each one the first time it connects (`~/.config/brrr/known_printers`) and refuses to send anything if it changes. After a printer reset, run `brrr forget PRINTER`.
 
-If a printer also offers plain IPP and its TLS has never worked, brrr warns and uses plain. It never downgrades a printer it has already pinned.
+Plenty of printers ship TLS too old for modern clients. If a printer's TLS has never worked, brrr warns and uses plain IPP, even if the printer only advertises `ipps`. It never downgrades a printer it has already pinned.
 
 ## Tested
 
@@ -59,7 +59,9 @@ Run against CUPS's `ippeveprinter` reference printer, with its output decoded by
 - .docx through LibreOffice, PostScript, CJK, Arabic, Cyrillic, and emoji text
 - `cargo test`: wire parsing, malformed packets, compression round-trips
 
-**Not yet tested on a physical printer, or with a Qt print dialog clicked through by hand.**
+Printed for real on an HP ENVY 5000 series over Wi-Fi, using plain IPP.
+
+**Not yet tested with a Qt print dialog clicked through by hand.**
 
 ## Not done yet
 

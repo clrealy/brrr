@@ -113,17 +113,29 @@ fn by_name(all: &[Printer], want: &str) -> Result<(String, Uri), String> {
 }
 
 pub(crate) fn usable(p: &Printer) -> Result<(String, Uri), String> {
+    connectable(p, true)
+}
+
+/// Picks the address to use. Lots of printers ship TLS too old for modern clients,
+/// so a printer whose TLS has never worked drops to plain IPP. Once a cert is
+/// pinned, TLS is known to work, so there are no downgrades.
+fn connectable(p: &Printer, warn: bool) -> Result<(String, Uri), String> {
     let uri = p.uri.clone().ok_or_else(|| format!("{} showed up but didn't finish answering, try again", p.name))?;
-    // Fall back only for printers whose TLS never worked. Once a cert is pinned, no downgrades.
-    if let (true, Some(plain)) = (uri.tls, &p.plain) {
-        if !tls::pinned(&uri) {
-            if let Err(e) = ipp::get_attrs(&uri, &["printer-state"]) {
-                eprintln!("brrr: couldn't encrypt the connection to {} ({e}), using plain IPP", p.name);
-                return Ok((p.name.clone(), plain.clone()));
-            }
-        }
+    if !uri.tls || tls::pinned(&uri) {
+        return Ok((p.name.clone(), uri));
     }
-    Ok((p.name.clone(), uri))
+    let Err(tls_err) = ipp::get_attrs(&uri, &["printer-state"]) else {
+        return Ok((p.name.clone(), uri));
+    };
+    // Not every printer advertises its plain IPP, but nearly all answer on 631.
+    let plain = p.plain.clone().unwrap_or_else(|| Uri { port: 631, tls: false, ..uri.clone() });
+    if ipp::get_attrs(&plain, &["printer-state"]).is_err() {
+        return Err(tls_err);
+    }
+    if warn {
+        eprintln!("brrr: {} can't do modern encryption, so this job goes unencrypted on your network", p.name);
+    }
+    Ok((p.name.clone(), plain))
 }
 
 fn pick(to: Option<&str>) -> Result<(String, Uri), String> {
@@ -472,11 +484,14 @@ fn cmd_list() -> Result<(), String> {
     let default = saved_default().unwrap_or_default().to_lowercase();
     for p in &all {
         let star = if !default.is_empty() && p.name.to_lowercase().contains(&default) { "*" } else { " " };
-        let info = match &p.uri {
-            Some(u) => ipp::get_attrs(u, STATUS_ATTRS).map(|a| human::state(&a)).unwrap_or_else(|e| e),
-            None => "found it, but it didn't finish answering".to_string(),
+        let (via, info) = match connectable(p, false) {
+            Ok((_, u)) => {
+                let via = if u.tls { "encrypted" } else if p.via == "usb" { "usb" } else { "plain" };
+                (via, ipp::get_attrs(&u, STATUS_ATTRS).map(|a| human::state(&a)).unwrap_or_else(|e| e))
+            }
+            Err(e) => (p.via, e),
         };
-        println!("{star} {}  [{}]  {info}", p.name, p.via);
+        println!("{star} {}  [{via}]  {info}", p.name);
     }
     Ok(())
 }
@@ -565,9 +580,13 @@ fn cmd_doctor() -> Result<(), String> {
     }
     for p in &all {
         println!("\n{}:", p.name);
-        let Some(u) = &p.uri else { println!("!! it showed up but didn't finish answering"); continue; };
+        let u = match connectable(p, false) {
+            Ok((_, u)) => u,
+            Err(e) => { println!("!! {e}"); continue; }
+        };
         println!("   address {}", u.to_ipp());
-        match ipp::get_attrs(u, &["all"]) {
+        if !u.tls && p.via != "usb" { println!("   heads up: unencrypted, this printer can't do modern TLS"); }
+        match ipp::get_attrs(&u, &["all"]) {
             Err(e) => println!("!! {e}"),
             Ok(a) => {
                 println!("ok talks IPP, state: {}", human::state(&a));
@@ -609,7 +628,7 @@ fn parse_args(args: Vec<String>, legacy: bool) -> (Opts, Vec<String>) {
         let copies = |s: &str| s.parse::<u32>().ok().filter(|n| *n >= 1).unwrap_or_else(|| die(format!("'{s}' isn't a copy count")));
         match a.as_str() {
             "-h" | "--help" => { println!("{HELP}"); std::process::exit(0); }
-            "-V" | "--version" => { println!("brrr 0.2.0"); std::process::exit(0); }
+            "-V" | "--version" => { println!("brrr 0.2.1"); std::process::exit(0); }
             "-t" | "--to" => o.to = Some(need(&mut it, &a)),
             "-d" | "-P" if legacy => o.to = Some(need(&mut it, &a)),
             "-n" | "--copies" => { let v = need(&mut it, &a); o.copies = copies(&v); }
