@@ -1,0 +1,19 @@
+[package]
+name = "brrr"
+version = "0.2.0"
+edition = "2021"
+description = "printing on linux, minus the suffering. driverless IPP, no daemon, no drivers."
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "pnm"] }
+socket2 = { version = "0.5", features = ["all"] }
+if-addrs = "0.13"
+tempfile = "3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17"
+unicode-width = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
