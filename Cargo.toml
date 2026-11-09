@@ -1,6 +1,6 @@
 [package]
 name = "brrr"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "printing on linux, minus the suffering. driverless IPP, no daemon, no drivers."
 license = "MIT"
@@ -13,6 +13,7 @@ tempfile = "3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ring = "0.17"
 unicode-width = "0.2"
+eframe = { version = "0.37", default-features = false, features = ["glow", "x11", "wayland", "default_fonts", "clipboard"] }
 
 [profile.release]
 opt-level = 3

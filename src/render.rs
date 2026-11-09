@@ -144,7 +144,7 @@ pub fn text_to_pdf(src: &Path, out: &Path, pts: (f64, f64)) -> Result<(), String
         if has("pango-view") && has("pdfunite") {
             return unicode_text_to_pdf(&text, out, pts, cols, rows);
         }
-        eprintln!("brrr: install pango and poppler to print non-latin text, using ? for now");
+        say!("install pango and poppler to print non-latin text, using ? for now");
     }
     let mut pages: Vec<Vec<Vec<u8>>> = vec![vec![]];
     for chunk in text.split_inclusive('\x0c') {
@@ -251,7 +251,7 @@ fn render_pdf(src: &Path, dir: &Path, s: &Spec, ranges: &Ranges) -> Result<Vec<P
     Ok(out)
 }
 
-fn load_photo(p: &Path) -> Result<RgbImage, String> {
+pub fn load_photo(p: &Path) -> Result<RgbImage, String> {
     let e = |e: image::ImageError| format!("couldn't read {}: {e}", p.display());
     let mut dec = ImageReader::open(p).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?.into_decoder().map_err(e)?;
     let o = dec.orientation().map_err(e)?;

@@ -7,6 +7,7 @@ Printing on Linux without CUPS, drivers, or a daemon. It finds the printer and p
 ```
 brrr report.pdf
 brrr print report.pdf   # same thing
+brrr gui                # or do it in a window
 brrr photo.jpg --size 4x6
 brrr notes.txt -2 -n 3 -p 1-4
 brrr essay.docx
@@ -22,6 +23,10 @@ sudo pacman -S poppler pango       # PDFs and non-latin text
 sudo pacman -S ipp-usb             # only for USB printers
 sudo pacman -S libreoffice-fresh   # only for .docx and friends
 ```
+
+## The window
+
+`brrr gui` shows your printers and ink levels, previews page 1 of your file, and tracks jobs. Drag a file in, paste a path, or hit Browse (needs `zenity` or `kdialog`).
 
 ## Make Ctrl+P use it
 

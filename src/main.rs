@@ -1,4 +1,10 @@
 //! brrr: printing on linux, minus the suffering.
+/// Status lines go to stderr, and to the window when a GUI job is running.
+macro_rules! say {
+    ($($a:tt)*) => { crate::say_line(&format!($($a)*)) };
+}
+
+mod gui;
 mod human;
 mod ipp;
 mod mdns;
@@ -15,6 +21,19 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+thread_local! {
+    static SINK: std::cell::RefCell<Option<Box<dyn Fn(&str)>>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) fn set_sink(f: Box<dyn Fn(&str)>) {
+    SINK.with(|s| *s.borrow_mut() = Some(f));
+}
+
+pub(crate) fn say_line(msg: &str) {
+    eprintln!("brrr: {msg}");
+    SINK.with(|s| if let Some(f) = s.borrow().as_ref() { f(msg) });
+}
+
 const HELP: &str = "brrr - printing without the suffering
 
   brrr FILE...             print it. pdf, docx, png, jpg, txt, ps, or - for stdin
@@ -24,6 +43,7 @@ const HELP: &str = "brrr - printing without the suffering
   brrr jobs                what's in the queue
   brrr cancel JOB          kill a job
   brrr default PRINTER     pick a default
+  brrr gui [FILE]          open the window
   brrr doctor              figure out why it's not working
   brrr forget PRINTER      trust a printer's new security certificate
   brrr serve --install     make Ctrl+P in apps print through brrr
@@ -57,11 +77,11 @@ pub(crate) struct Opts {
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
-    eprintln!("brrr: {msg}");
+    say!("{msg}");
     std::process::exit(1);
 }
 
-fn parse_pages(s: &str) -> Result<render::Ranges, String> {
+pub(crate) fn parse_pages(s: &str) -> Result<render::Ranges, String> {
     let err = || format!("'{s}' isn't a page list, try something like 1-3,7,10-");
     s.split(',').map(|p| {
         let p = p.trim();
@@ -120,7 +140,7 @@ pub(crate) fn usable(p: &Printer) -> Result<(String, Uri), String> {
 /// Picks the address to use. Lots of printers ship TLS too old for modern clients,
 /// so a printer whose TLS has never worked drops to plain IPP. Once a cert is
 /// pinned, TLS is known to work, so there are no downgrades.
-fn connectable(p: &Printer, warn: bool) -> Result<(String, Uri), String> {
+pub(crate) fn connectable(p: &Printer, warn: bool) -> Result<(String, Uri), String> {
     let uri = p.uri.clone().ok_or_else(|| format!("{} showed up but didn't finish answering, try again", p.name))?;
     if !uri.tls || tls::pinned(&uri) {
         return Ok((p.name.clone(), uri));
@@ -134,7 +154,7 @@ fn connectable(p: &Printer, warn: bool) -> Result<(String, Uri), String> {
         return Err(tls_err);
     }
     if warn {
-        eprintln!("brrr: {} can't do modern encryption, so this job goes unencrypted on your network", p.name);
+        say!("{} can't do modern encryption, so this job goes unencrypted on your network", p.name);
     }
     Ok((p.name.clone(), plain))
 }
@@ -155,7 +175,7 @@ fn pick(to: Option<&str>) -> Result<(String, Uri), String> {
     if let Some(s) = saved {
         match by_name(&all, &s) {
             Ok(x) => return Ok(x),
-            Err(_) => eprintln!("brrr: your default '{s}' isn't around, looking for others"),
+            Err(_) => say!("your default '{s}' isn't around, looking for others"),
         }
     }
     match all.as_slice() {
@@ -296,7 +316,7 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
     }
     if ipp::int(&a, "printer-state") == Some(5) {
         let why: Vec<_> = ipp::texts(&a, "printer-state-reasons").iter().filter_map(|r| human::reason(r)).collect();
-        if !why.is_empty() { eprintln!("brrr: heads up, {pname} says: {}", why.join(", ")); }
+        if !why.is_empty() { say!("heads up, {pname} says: {}", why.join(", ")); }
     }
 
     let (media, size) = choose_media(&a, o.size.as_deref())?;
@@ -310,12 +330,12 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
         },
     };
     if sides != Sides::One && !sides_ok.iter().any(|s| s == sides_word(sides)) {
-        eprintln!("brrr: this printer can't do both sides, going one-sided");
+        say!("this printer can't do both sides, going one-sided");
         sides = Sides::One;
     }
     let color_capable = ipp::boolean(&a, "color-supported").unwrap_or(false);
     let default_mode = ipp::text(&a, "print-color-mode-default").unwrap_or_default();
-    if o.color == Some(true) && !color_capable { eprintln!("brrr: this printer is black and white only"); }
+    if o.color == Some(true) && !color_capable { say!("this printer is black and white only"); }
     let color = o.color.unwrap_or(default_mode != "monochrome") && color_capable;
     let color_modes = ipp::texts(&a, "print-color-mode-supported");
 
@@ -333,7 +353,7 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
             (p, Kind::Pdf)
         }
         Kind::Office => {
-            eprintln!("brrr: converting {label} with LibreOffice...");
+            say!("converting {label} with LibreOffice...");
             (render::office_to_pdf(path, tmp.path())?, Kind::Pdf)
         }
         _ => (path.to_path_buf(), kind),
@@ -372,7 +392,7 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
         for attempt in 0..12 {
             let r = ipp::request(uri, &build, Some(doc))?;
             if !matches!(r.status, 0x0502 | 0x0507) { return Ok(r); }
-            if attempt == 0 { eprintln!("brrr: {pname} is busy, waiting..."); }
+            if attempt == 0 { say!("{pname} is busy, waiting..."); }
             std::thread::sleep(Duration::from_secs(5));
         }
         Err(format!("{pname} stayed busy for a whole minute, try again later"))
@@ -388,9 +408,9 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
         );
         let repeat = if copies_ok { 1 } else { o.copies };
         let out = tmp.path().join("job.raster");
-        eprintln!("brrr: converting for {pname} ({:?} {:?}, {}x{} dpi)...", spec.format, spec.kind, spec.xdpi, spec.ydpi);
+        say!("converting for {pname} ({:?} {:?}, {}x{} dpi)...", spec.format, spec.kind, spec.xdpi, spec.ydpi);
         let n = render::rasterize(&src, kind, &spec, &o.pages, repeat, m, &out)?;
-        eprintln!("brrr: sending {n} page{} to {pname}", if n == 1 { "" } else { "s" });
+        say!("sending {n} page{} to {pname}", if n == 1 { "" } else { "s" });
         let mime = if spec.format == Format::Pwg { "image/pwg-raster" } else { "image/urf" };
         submit(&out, mime, false, copies_ok)
     };
@@ -398,12 +418,12 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
     let mut jobs = vec![];
     if direct {
         let mime = match kind { Kind::Png => "image/png", Kind::Jpeg => "image/jpeg", _ => "application/pdf" };
-        eprintln!("brrr: sending {label} to {pname}");
+        say!("sending {label} to {pname}");
         let rounds = if copies_ok { 1 } else { o.copies };
         for _ in 0..rounds {
             let mut r = submit(&src, mime, !o.pages.is_empty(), copies_ok)?;
             if matches!(r.status, 0x040A | 0x040B) {
-                eprintln!("brrr: {pname} choked on that, converting it instead");
+                say!("{pname} choked on that, converting it instead");
                 r = send_raster()?;
                 jobs.push(check(r)?);
                 break;
@@ -416,7 +436,7 @@ pub(crate) fn print_to(path: &Path, label: &str, o: &Opts, pname: &str, uri: &Ur
 
     for id in jobs {
         on_job(id);
-        if o.no_wait || o.legacy { eprintln!("brrr: job {id} is in"); continue; }
+        if o.no_wait || o.legacy { say!("job {id} is in"); continue; }
         watch(uri, pname, id)?;
     }
     Ok(())
@@ -430,7 +450,7 @@ fn check(r: ipp::Resp) -> Result<i32, String> {
     }
     if !r.unsupported.is_empty() {
         let k: Vec<_> = r.unsupported.keys().cloned().collect();
-        eprintln!("brrr: printer ignored: {}", k.join(", "));
+        say!("printer ignored: {}", k.join(", "));
     }
     r.job.first().and_then(|j| ipp::int(j, "job-id")).ok_or_else(|| "printer took it but never gave a job number".into())
 }
@@ -449,10 +469,10 @@ fn watch(uri: &Uri, pname: &str, id: i32) -> Result<(), String> {
         }, None);
         let r = match r {
             Ok(r) if r.ok() => r,
-            Ok(r) if r.status == 0x0406 || r.status == 0x0407 => { eprintln!("brrr: job {id} finished"); return Ok(()); }
+            Ok(r) if r.status == 0x0406 || r.status == 0x0407 => { say!("job {id} finished"); return Ok(()); }
             Ok(_) | Err(_) => {
                 failures += 1;
-                if failures > 4 { eprintln!("brrr: lost track of job {id}, but it was sent. check the printer"); return Ok(()); }
+                if failures > 4 { say!("lost track of job {id}, but it was sent. check the printer"); return Ok(()); }
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
@@ -461,7 +481,7 @@ fn watch(uri: &Uri, pname: &str, id: i32) -> Result<(), String> {
         let j = r.job.first().cloned().unwrap_or_default();
         let st = ipp::int(&j, "job-state").unwrap_or(0);
         match st {
-            9 => { eprintln!("brrr: done, go grab it"); return Ok(()); }
+            9 => { say!("done, go grab it"); return Ok(()); }
             7 => return Err(format!("job {id} got canceled")),
             8 => {
                 let why: Vec<_> = ipp::texts(&j, "job-state-reasons").iter().filter(|r| *r != "job-printing").filter_map(|r| human::reason(r)).collect();
@@ -472,7 +492,7 @@ fn watch(uri: &Uri, pname: &str, id: i32) -> Result<(), String> {
         let p = ipp::get_attrs(uri, &["printer-state-reasons"]).unwrap_or_default();
         let problems: Vec<String> = ipp::texts(&p, "printer-state-reasons").iter().filter(|r| human::is_blocking(r)).filter_map(|r| human::reason(r)).collect();
         let line = if problems.is_empty() { human::job_state(st).to_string() } else { format!("{pname}: {}", problems.join(", ")) };
-        if line != last { eprintln!("brrr: {line}"); last = line; }
+        if line != last { say!("{line}"); last = line; }
         std::thread::sleep(Duration::from_secs(2));
     }
 }
@@ -616,7 +636,7 @@ fn lp_option(o: &mut Opts, kv: &str) {
         Some(("sides", "one-sided")) => o.sides = Some(Sides::One),
         Some(("media", m)) => o.size = Some(m.to_string()),
         Some(("page-ranges", p)) => { o.pages = parse_pages(p).unwrap_or_else(|e| die(e)); }
-        _ => eprintln!("brrr: ignoring option {kv}"),
+        _ => say!("ignoring option {kv}"),
     }
 }
 
@@ -629,7 +649,7 @@ fn parse_args(args: Vec<String>, legacy: bool) -> (Opts, Vec<String>) {
         let copies = |s: &str| s.parse::<u32>().ok().filter(|n| *n >= 1).unwrap_or_else(|| die(format!("'{s}' isn't a copy count")));
         match a.as_str() {
             "-h" | "--help" => { println!("{HELP}"); std::process::exit(0); }
-            "-V" | "--version" => { println!("brrr 0.2.2"); std::process::exit(0); }
+            "-V" | "--version" => { println!("brrr 0.3.0"); std::process::exit(0); }
             "-t" | "--to" => o.to = Some(need(&mut it, &a)),
             "-d" | "-P" if legacy => o.to = Some(need(&mut it, &a)),
             "-n" | "--copies" => { let v = need(&mut it, &a); o.copies = copies(&v); }
@@ -667,6 +687,10 @@ fn main() {
     let legacy = argv0 == "lp" || argv0 == "lpr";
 
     if args.is_empty() && !legacy { println!("{HELP}"); return; }
+    if !legacy && args[0] == "gui" && !Path::new("gui").exists() {
+        if let Err(e) = gui::main(args.get(1).map(PathBuf::from)) { die(e); }
+        return;
+    }
     if !legacy && args[0] == "serve" {
         if let Err(e) = serve::main(&args[1..]) { die(e); }
         return;
@@ -711,13 +735,13 @@ fn main() {
                     let name = Path::new(&f).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone());
                     print_one(Path::new(&f), &name, &o)
                 };
-                if let Err(e) = run { eprintln!("brrr: {f}: {e}"); res = Err(String::new()); }
+                if let Err(e) = run { say!("{f}: {e}"); res = Err(String::new()); }
             }
             res
         }
     };
     if let Err(e) = result {
-        if !e.is_empty() { eprintln!("brrr: {e}"); }
+        if !e.is_empty() { say!("{e}"); }
         std::process::exit(1);
     }
 }
